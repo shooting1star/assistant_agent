@@ -1,5 +1,213 @@
 # assistant_agent
 
+로컬 Ollama를 사용하는 Python용 VS Code AI 코딩 어시스턴트 MVP입니다.
+Python 파일의 저장과 진단 오류를 감지하고, 오류를 `.codemate`에 기록하며, Ollama에게 코드 분석과 최적화 제안을 요청합니다. 파일 수정은 항상 사용자의 승인 후에만 적용됩니다.
+
+## 기능
+
+- VS Code 저장 및 오류 진단 이벤트 감지
+- API key, token, password, secret 등 민감정보 마스킹
+- 오류 원인, 예상 결과, 해결 방법을 Markdown으로 기록
+- Ollama 기반 오류 분석 및 코드 최적화 제안
+- 최적화 결과를 `.codemate/optimizations/OPT-XXXX.md`에 저장
+- 승인된 변경만 문법 검증 후 적용하고 실패하면 롤백
+- Ollama가 없을 때 fallback 응답 제공
+
+## 구조
+
+```text
+VS Code Extension
+        |
+        v
+FastAPI Agent (127.0.0.1:8000)
+        |
+        +-- PrivacyFilter
+        +-- ErrorAnalyzer
+        +-- OptimizationEngine --> Ollama (127.0.0.1:11434)
+        +-- RecordManager ------> .codemate/
+        +-- ChangeManager ------> 승인 후 파일 수정
+```
+
+## 요구사항
+
+- Python 3.12 이상
+- VS Code 1.90 이상
+- `curl`
+- 선택 사항: [Ollama](https://ollama.com)와 로컬 모델
+
+## 설치 및 실행
+
+### 1. Python 의존성 설치
+
+```bash
+cd /workspaces/assistant_agent
+python -m pip install -r requirements.txt
+```
+
+### 2. Agent 서버 실행
+
+```bash
+python -m uvicorn agent.server:app --host 127.0.0.1 --port 8000
+```
+
+다른 터미널에서 서버 상태를 확인합니다.
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+예상 결과:
+
+```json
+{"status":"ok","service":"assistant_agent"}
+```
+
+## Ollama 설치 및 연결
+
+### Linux 설치
+
+Ollama가 설치되어 있지 않다면 Ollama 공식 설치 방법을 사용합니다.
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+설치 후 Ollama 서버를 실행합니다.
+
+```bash
+ollama serve
+```
+
+새 터미널에서 Python 최적화 모델을 다운로드합니다.
+
+```bash
+ollama pull llama3.2
+```
+
+연결과 모델 목록을 확인합니다.
+
+```bash
+curl http://127.0.0.1:11434/api/tags
+```
+
+`llama3.2`가 목록에 보이면 이 프로젝트에서 바로 사용할 수 있습니다. Ollama 서버가 다른 주소나 포트를 사용한다면 다음 환경변수를 지정합니다.
+
+```bash
+export OLLAMA_BASE_URL=http://127.0.0.1:11434
+export OLLAMA_MODEL=llama3.2
+```
+
+환경변수를 지정하지 않으면 위 두 값이 기본값으로 사용됩니다.
+
+### 현재 환경 확인 결과
+
+현재 개발 컨테이너에서는 Ollama 명령과 `127.0.0.1:11434` 서버가 확인되지 않았습니다. 따라서 지금은 Ollama 요청이 fallback 응답으로 처리됩니다. 실제 추천을 사용하려면 Ollama를 설치하고 `ollama serve`, `ollama pull llama3.2`를 실행해야 합니다.
+
+## Ollama 최적화 사용
+
+서버와 Ollama를 실행한 뒤 Python 코드를 `/optimize`로 보냅니다.
+
+```bash
+curl -X POST http://127.0.0.1:8000/optimize \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_path": "/tmp/example.py",
+    "code": "result = []\nfor i in range(1000):\n    result.append(i * 2)\n"
+  }'
+```
+
+응답에는 사용 모델, 최적화 추천, 저장된 기록 경로가 포함됩니다.
+
+```json
+{
+  "status": "suggested",
+  "model": "llama3.2",
+  "suggestion": "...",
+  "record_path": ".codemate/optimizations/OPT-0001.md"
+}
+```
+
+최적화 엔진의 구현은 [agent/optimization_engine.py](agent/optimization_engine.py), Ollama HTTP 호출은 [agent/ollama_client.py](agent/ollama_client.py), API 연결은 [agent/server.py](agent/server.py)의 `/optimize`에 있습니다.
+
+## 오류 기록과 승인 기반 수정
+
+오류 이벤트는 다음처럼 보낼 수 있습니다.
+
+```bash
+curl -X POST http://127.0.0.1:8000/events \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventType": "error",
+    "filePath": "/tmp/example.py",
+    "message": "NameError: name unknown_variable is not defined",
+    "stackTrace": "Traceback ..."
+  }'
+```
+
+결과는 `.codemate/errors/ERR-XXXX.md`에 저장됩니다.
+
+수정은 `approved: true`일 때만 적용됩니다.
+
+```bash
+curl -X POST http://127.0.0.1:8000/apply-change \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_path": "/tmp/example.py",
+    "new_content": "value = 0\nprint(value)\n",
+    "approved": true
+  }'
+```
+
+문법 검증에 실패하면 원래 파일로 복구됩니다. `approved: false`이면 파일을 변경하지 않고 승인 대기 상태를 반환합니다.
+
+## VS Code 확장 실행
+
+1. VS Code에서 `/workspaces/assistant_agent/extension` 폴더를 엽니다.
+2. 확장 개발에 필요한 Extension Host 환경으로 F5를 실행합니다.
+3. Extension Development Host에서 Python 파일을 엽니다.
+4. 파일을 저장하거나 진단 오류를 발생시킵니다.
+5. 확장이 Agent 서버로 이벤트를 전송합니다.
+6. 수정 제안이 생성되면 VS Code 승인 대화상자에서 `승인하고 적용` 또는 `무시`를 선택합니다.
+
+확장 코드: [extension/src/extension.js](extension/src/extension.js)
+
+## 기록 폴더
+
+```text
+.codemate/
+├── errors/          # ERR-XXXX.md
+├── issues/          # ISSUE-XXXX.md
+└── optimizations/   # OPT-XXXX.md
+```
+
+## 테스트
+
+```bash
+cd /workspaces/assistant_agent
+pytest -q
+```
+
+테스트는 개인정보 마스킹, 이벤트 파이프라인, 오류 기록, Ollama 호출 인터페이스, 최적화 기록, 승인 기반 변경을 검증합니다. Ollama가 설치되어 있지 않아도 Ollama 호출 실패 fallback 테스트는 실행할 수 있습니다.
+
+## 주요 파일
+
+- [agent/server.py](agent/server.py): FastAPI 엔드포인트
+- [agent/optimization_engine.py](agent/optimization_engine.py): Ollama 기반 최적화 분석
+- [agent/ollama_client.py](agent/ollama_client.py): Ollama `/api/generate` 클라이언트
+- [agent/error_analyzer.py](agent/error_analyzer.py): 오류 요약
+- [agent/record_manager.py](agent/record_manager.py): `.codemate` 기록 저장
+- [agent/change_manager.py](agent/change_manager.py): 승인, 문법 검증, 롤백
+- [extension/src/extension.js](extension/src/extension.js): VS Code 이벤트와 승인 UI
+- [tests/](tests): 자동 테스트
+
+## 제한사항
+
+- 현재 확장은 개발용 Extension Host에서 실행하는 MVP입니다.
+- Ollama가 없으면 실제 AI 추천 대신 fallback 응답을 반환합니다.
+- `/optimize`는 추천과 기록 저장까지 수행하며, 최적화 코드를 자동 적용하지 않습니다.
+- 파일 수정은 승인 API와 문법 검증을 거쳐야 합니다.
+# assistant_agent
+
 VS Code에서 파이썬 코드를 작성할 때, 에러를 자동으로 감지하고 원인을 정리하며 기록을 남기고, 필요한 경우 사용자의 승인 하에 수정까지 제안하는 로컬 AI 코딩 어시스턴트 MVP입니다.
 
 ## 1. 이 프로젝트가 하는 일

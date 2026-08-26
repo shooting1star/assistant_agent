@@ -1,4 +1,5 @@
 import json
+import os
 import urllib.request
 
 
@@ -6,6 +7,9 @@ class OllamaClient:
     def __init__(self, model_name: str = "llama3.2", base_url: str = "http://127.0.0.1:11434"):
         self.model_name = model_name
         self.base_url = base_url.rstrip("/")
+    def __init__(self, model_name: str | None = None, base_url: str | None = None):
+        self.model_name = model_name or os.getenv("OLLAMA_MODEL", "llama3.2")
+        self.base_url = (base_url or os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")).rstrip("/")
 
     def generate(self, prompt: str) -> dict:
         payload = json.dumps({
