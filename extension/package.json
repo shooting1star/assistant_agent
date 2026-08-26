@@ -15,6 +15,10 @@
       {
         "command": "assistant-agent.showStatus",
         "title": "Assistant Agent: Show Status"
+      },
+      {
+        "command": "assistant-agent.optimizeCurrentFile",
+        "title": "Assistant Agent: Optimize Current Python File"
       }
     ]
   }

@@ -75,13 +75,14 @@ def run_file(payload: dict):
     if not file_path:
         return {"status": "invalid", "message": "file_path is required"}
 
+    path = Path(file_path).expanduser().resolve()
     try:
         completed = subprocess.run(
-            [sys.executable, file_path],
+            [sys.executable, str(path)],
             capture_output=True,
             text=True,
             timeout=timeout,
-            cwd=str(Path(file_path).parent),
+            cwd=str(path.parent),
         )
     except subprocess.TimeoutExpired:
         return {"status": "error", "return_code": None, "stderr": "Execution timed out."}
@@ -94,6 +95,14 @@ def run_file(payload: dict):
         "stdout": completed.stdout,
         "stderr": completed.stderr,
     }
+
+
+@app.post("/rollback")
+def rollback_change(payload: dict):
+    file_path = payload.get("file_path")
+    if not file_path:
+        return {"status": "invalid", "message": "file_path is required"}
+    return change_manager.rollback(file_path)
 
 
 @app.post("/analyze")
@@ -132,7 +141,9 @@ def optimize_code(payload: dict):
     result = optimization_engine.analyze_code(file_path, code)
     return {
         "status": result["status"],
+        "ollama_connected": result["ollama_connected"],
         "model": result["model"],
         "suggestion": result["suggestion"],
+        "optimized_code": result["optimized_code"],
         "record_path": str(result["record_path"]),
     }

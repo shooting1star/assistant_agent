@@ -52,3 +52,9 @@ class ChangeManager:
             return "passed"
         except Exception:
             return "failed"
+
+    def rollback(self, file_path: str):
+        if file_path not in self._backup:
+            return {"status": "not_found", "file_path": file_path}
+        Path(file_path).write_text(self._backup[file_path], encoding="utf-8")
+        return {"status": "rolled_back", "file_path": file_path}

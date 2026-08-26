@@ -122,6 +122,7 @@ async function handleDiagnosticApproval(document, diagnostic) {
       vscode.window.showInformationMessage(`수정 적용 완료: ${filePath}`);
       const runResult = await sendJsonRequest('/run-file', { file_path: filePath });
       if (runResult && runResult.status === 'failed') {
+        await sendJsonRequest('/rollback', { file_path: filePath });
         sendEventToAgent({
           eventType: 'runtime_error',
           filePath,
@@ -139,6 +140,55 @@ async function handleDiagnosticApproval(document, diagnostic) {
     }
   } catch (error) {
     console.error('Failed to process approval flow:', error);
+  }
+}
+
+async function optimizeCurrentFile() {
+  const document = vscode.window.activeTextEditor && vscode.window.activeTextEditor.document;
+  if (!document || document.languageId !== 'python') {
+    vscode.window.showWarningMessage('Python 파일을 열고 다시 실행하세요.');
+    return;
+  }
+
+  try {
+    const result = await sendJsonRequest('/optimize', {
+      file_path: document.uri.fsPath,
+      code: document.getText(),
+    });
+    if (!result || typeof result.optimized_code !== 'string') {
+      vscode.window.showWarningMessage('최적화 코드 제안을 받지 못했습니다.');
+      return;
+    }
+
+    const action = await vscode.window.showInformationMessage(
+      `최적화 제안이 도착했습니다. ${result.ollama_connected ? 'Ollama 분석' : '기본 분석'} 결과를 적용할까요?`,
+      '승인하고 적용',
+      '무시'
+    );
+    if (action !== '승인하고 적용' || result.optimized_code === document.getText()) {
+      return;
+    }
+
+    const applied = await sendJsonRequest('/apply-change', {
+      file_path: document.uri.fsPath,
+      new_content: result.optimized_code,
+      approved: true,
+    });
+    if (applied.status !== 'applied') {
+      vscode.window.showWarningMessage('최적화 코드가 문법 검증을 통과하지 못해 적용되지 않았습니다.');
+      return;
+    }
+
+    const runResult = await sendJsonRequest('/run-file', { file_path: document.uri.fsPath });
+    if (runResult.status === 'passed') {
+      vscode.window.showInformationMessage('최적화 코드 적용 및 실행 검증이 완료되었습니다.');
+    } else {
+      await sendJsonRequest('/rollback', { file_path: document.uri.fsPath });
+      vscode.window.showWarningMessage('최적화 코드는 적용되었지만 실행 검증에서 오류가 발생했습니다.');
+    }
+  } catch (error) {
+    console.error('Failed to optimize current file:', error);
+    vscode.window.showErrorMessage('최적화 서버에 연결할 수 없습니다. Agent 서버를 먼저 실행하세요.');
   }
 }
 
@@ -167,6 +217,7 @@ function activate(context) {
   };
 
   const saveDisposable = vscode.workspace.onDidSaveTextDocument(sendSaveEvent);
+  const optimizeCommand = vscode.commands.registerCommand('assistant-agent.optimizeCurrentFile', optimizeCurrentFile);
   const diagnosticDisposable = vscode.languages.onDidChangeDiagnostics((event) => {
     const uriKey = event.uri.toString();
     if (!event.diagnostics || event.diagnostics.length === 0) {
@@ -188,7 +239,7 @@ function activate(context) {
     }
   });
 
-  context.subscriptions.push(saveDisposable, diagnosticDisposable, {
+  context.subscriptions.push(saveDisposable, diagnosticDisposable, optimizeCommand, {
     dispose() {
       for (const timer of diagnosticTimers.values()) clearTimeout(timer);
       diagnosticTimers.clear();

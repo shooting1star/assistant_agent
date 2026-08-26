@@ -10,6 +10,7 @@ class OllamaClient:
     def __init__(self, model_name: str | None = None, base_url: str | None = None):
         self.model_name = model_name or os.getenv("OLLAMA_MODEL", "llama3.2")
         self.base_url = (base_url or os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")).rstrip("/")
+        self.timeout = float(os.getenv("OLLAMA_TIMEOUT", "120"))
 
     def generate(self, prompt: str) -> dict:
         payload = json.dumps({
@@ -26,7 +27,7 @@ class OllamaClient:
         )
 
         try:
-            with urllib.request.urlopen(request, timeout=30) as response:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 body = response.read().decode("utf-8")
                 parsed = json.loads(body)
                 return {

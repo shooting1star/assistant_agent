@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 from agent.ollama_client import OllamaClient
@@ -16,8 +17,10 @@ class OptimizationEngine:
         static_findings = self._static_findings(code)
         prompt = (
             "Optimize this Python code. You are a Python optimization reviewer; return concise, actionable suggestions. "
-            "Cover performance, time and space complexity, readability, and risks. "
-            "Do not rewrite or apply files. Use this format: Summary, Findings, Complexity, Proposed change.\n\n"
+            "Write every heading, subheading, explanation, finding, risk, and complexity description in Korean. "
+            "Use Korean labels such as 요약, 개선 사항, 복잡도, 위험 요소, 제안 코드, 설명. "
+            "Return a short explanation followed by the complete optimized Python code inside a ```python code fence. "
+            "Do not apply files.\n\n"
             f"File: {file_path}\n\nCode:\n{code}"
         )
 
@@ -29,15 +32,43 @@ class OptimizationEngine:
             suggestion = "\n".join(static_findings) or "정적 분석에서 즉시 개선할 항목을 찾지 못했습니다."
         elif static_findings:
             suggestion = f"{suggestion}\n\n정적 분석 참고:\n" + "\n".join(static_findings)
-        title = f"Optimization for {Path(file_path).name}"
-        record_path = self.record_manager.save_optimization(title, suggestion)
+        optimized_code = self._extract_code(response_text) or self._fallback_code(code)
+        title = f"최적화 제안: {Path(file_path).name}"
+        record_content = (
+            f"## 분석 결과\n{suggestion}\n\n"
+            f"## 제안 코드\n```python\n{optimized_code}\n```\n"
+        )
+        record_path = self.record_manager.save_optimization(title, record_content)
 
         return {
-            "status": "suggested",
+            "status": "suggested" if result.get("ok") else "fallback",
+            "ollama_connected": bool(result.get("ok")),
             "model": result.get("model", self.ollama_client.model_name),
             "suggestion": suggestion,
+            "optimized_code": optimized_code,
             "record_path": record_path,
         }
+
+    def _extract_code(self, response: str) -> str:
+        matches = re.findall(r"```(?:python|py)?\s*\n(.*?)```", response, re.DOTALL | re.IGNORECASE)
+        for candidate in reversed(matches):
+            candidate = candidate.strip()
+            try:
+                compile(candidate, "<ollama-optimization>", "exec")
+                return candidate
+            except SyntaxError:
+                continue
+        return ""
+
+    def _fallback_code(self, code: str) -> str:
+        try:
+            tree = ast.parse(code)
+        except SyntaxError:
+            return code
+        for node in ast.walk(tree):
+            if isinstance(node, ast.While) and isinstance(node.test, ast.Constant) and node.test.value is True:
+                return code
+        return code
 
     def _static_findings(self, code: str) -> list[str]:
         try:

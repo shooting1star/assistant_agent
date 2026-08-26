@@ -62,6 +62,7 @@ curl http://127.0.0.1:11434/api/tags
 ```text
 OLLAMA_MODEL=llama3.2
 OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_TIMEOUT=120
 ```
 
 다른 모델을 사용하려면 Agent 서버를 실행하기 전에 설정합니다.
@@ -69,6 +70,7 @@ OLLAMA_BASE_URL=http://127.0.0.1:11434
 ```bash
 export OLLAMA_MODEL=codellama
 export OLLAMA_BASE_URL=http://127.0.0.1:11434
+export OLLAMA_TIMEOUT=120
 python -m uvicorn agent.server:app --host 127.0.0.1 --port 8000
 ```
 
@@ -79,7 +81,7 @@ command -v ollama
 curl --max-time 3 http://127.0.0.1:11434/api/tags
 ```
 
-Ollama가 없거나 연결에 실패하면 `Ollama unavailable` fallback 응답을 반환합니다. 실제 AI 추천에는 Ollama 서버와 모델이 모두 필요합니다.
+Ollama가 없거나 연결에 실패하면 `status: "fallback"`, `ollama_connected: false`와 AST 기반 추천을 반환합니다. 첫 실행은 모델 로딩 때문에 오래 걸릴 수 있으며, timeout은 `OLLAMA_TIMEOUT`으로 조정합니다. 실제 AI 추천에는 Ollama 서버와 모델이 모두 필요합니다.
 
 ## 코드 최적화
 
@@ -94,7 +96,9 @@ curl -X POST http://127.0.0.1:8000/optimize \
   }'
 ```
 
-Ollama가 실패해도 AST 기반 분석으로 리스트 `append` 패턴과 중첩 반복문을 점검합니다.
+Ollama가 실패해도 AST 기반 분석으로 리스트 `append` 패턴과 중첩 반복문을 점검합니다. 응답의 `ollama_connected: true`는 실제 모델 결과이고, `false`는 fallback 결과입니다. 모델 설치나 환경변수를 변경한 뒤에는 Agent 서버를 재시작해야 합니다.
+
+응답의 `optimized_code`는 수정 후보이며 자동 적용되지 않습니다. 사용자가 내용을 확인한 뒤 `approved: true`로 `/apply-change`를 호출해야 파일이 변경됩니다. 적용 후 `/run-file`을 호출해 실행 결과를 확인합니다.
 
 관련 코드:
 
@@ -126,7 +130,7 @@ Ollama가 실패해도 AST 기반 분석으로 리스트 `append` 패턴과 중�
                                     실패 시 runtime_error 기록
 ```
 
-확장 코드는 [extension/src/extension.js](extension/src/extension.js)입니다.
+확장 코드는 [extension/src/extension.js](extension/src/extension.js)입니다. 현재 파일을 직접 최적화하려면 명령 팔레트에서 `Assistant Agent: Optimize Current Python File`을 실행합니다. 확장이 `/optimize`로 제안을 받은 뒤 승인 대화상자를 표시하며, 승인할 때만 파일을 변경하고 실행 검증합니다.
 
 ## API 예시
 

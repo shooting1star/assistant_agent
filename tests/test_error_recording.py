@@ -25,8 +25,15 @@ def test_error_event_creates_markdown_record(tmp_path):
     data = response.json()
     assert data["status"] == "accepted"
     assert "NameError" in str(data)
-    assert "resolved" in str(data).lower() or "open" in str(data).lower()
+    assert "열림" in str(data)
 
     records_dir = Path(".codemate/errors")
     assert records_dir.exists()
     assert any(records_dir.glob("ERR-*.md"))
+
+    record_path = Path(data["record"])
+    record_text = record_path.read_text(encoding="utf-8")
+    assert "생성일" in record_text
+    assert "## 원인" in record_text
+    assert "## 해결 방법" in record_text
+    assert "## 상태\n열림" in record_text

@@ -25,17 +25,17 @@ class RecordManager:
         file_name = f"{prefix}-{count:04d}.md"
         file_path = folder_path / file_name
         timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-        file_path.write_text(f"# {title}\n\n**Created:** {timestamp}\n\n{content}\n", encoding="utf-8")
+        file_path.write_text(f"# {title}\n\n**생성일:** {timestamp}\n\n{content}\n", encoding="utf-8")
         return file_path
 
     def save_error_summary(self, event: dict) -> Path:
         summary = event.get("summary") or {}
-        title = summary.get("problem") or event.get("message") or "Error record"
+        title = summary.get("problem") or event.get("message") or "오류 기록"
         body = (
-            f"## Problem\n{summary.get('problem', 'Unknown error')}\n\n"
-            f"## Cause\n{summary.get('cause', 'Unknown cause')}\n\n"
-            f"## Expected Result\n{summary.get('expected_result', 'No crash')}\n\n"
-            f"## Solution\n{summary.get('solution', 'Investigate and fix the root cause')}\n\n"
-            f"## Status\n{summary.get('status', 'OPEN')}\n"
+            f"## 문제\n{summary.get('problem', '알 수 없는 오류')}\n\n"
+            f"## 원인\n{summary.get('cause', '원인을 확인해야 합니다')}\n\n"
+            f"## 기대 결과\n{summary.get('expected_result', '오류 없이 실행')}\n\n"
+            f"## 해결 방법\n{summary.get('solution', '근본 원인을 확인하고 수정하세요')}\n\n"
+            f"## 상태\n{summary.get('status', '열림')}\n"
         )
         return self.save_error(title[:80], body)
