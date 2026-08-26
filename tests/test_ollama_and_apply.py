@@ -61,3 +61,18 @@ def test_apply_change_endpoint_requires_approval(tmp_path):
     assert response.status_code == 200
     assert response.json()["status"] == "pending_approval"
     assert file_path.read_text(encoding="utf-8") == "print('before')\n"
+
+
+def test_run_file_endpoint_reports_success_and_failure(tmp_path):
+    success_path = tmp_path / "success.py"
+    success_path.write_text("print('ok')\n", encoding="utf-8")
+    failure_path = tmp_path / "failure.py"
+    failure_path.write_text("raise RuntimeError('broken')\n", encoding="utf-8")
+
+    client = TestClient(app)
+    success = client.post("/run-file", json={"file_path": str(success_path)})
+    failure = client.post("/run-file", json={"file_path": str(failure_path)})
+
+    assert success.json()["status"] == "passed"
+    assert failure.json()["status"] == "failed"
+    assert "RuntimeError" in failure.json()["stderr"]

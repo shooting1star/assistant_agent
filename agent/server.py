@@ -1,3 +1,7 @@
+import subprocess
+import sys
+from pathlib import Path
+
 from fastapi import FastAPI
 
 from agent.change_manager import ChangeManager
@@ -61,6 +65,35 @@ def apply_change(payload: dict):
         return result
 
     return {"status": "error", "message": "unknown change result"}
+
+
+@app.post("/run-file")
+def run_file(payload: dict):
+    file_path = payload.get("file_path")
+    timeout = min(float(payload.get("timeout", 10)), 30)
+
+    if not file_path:
+        return {"status": "invalid", "message": "file_path is required"}
+
+    try:
+        completed = subprocess.run(
+            [sys.executable, file_path],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=str(Path(file_path).parent),
+        )
+    except subprocess.TimeoutExpired:
+        return {"status": "error", "return_code": None, "stderr": "Execution timed out."}
+    except OSError as error:
+        return {"status": "error", "return_code": None, "stderr": str(error)}
+
+    return {
+        "status": "passed" if completed.returncode == 0 else "failed",
+        "return_code": completed.returncode,
+        "stdout": completed.stdout,
+        "stderr": completed.stderr,
+    }
 
 
 @app.post("/analyze")

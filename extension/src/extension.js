@@ -120,6 +120,17 @@ async function handleDiagnosticApproval(document, diagnostic) {
 
     if (result && result.status === 'applied') {
       vscode.window.showInformationMessage(`수정 적용 완료: ${filePath}`);
+      const runResult = await sendJsonRequest('/run-file', { file_path: filePath });
+      if (runResult && runResult.status === 'failed') {
+        sendEventToAgent({
+          eventType: 'runtime_error',
+          filePath,
+          message: runResult.stderr || 'Python execution failed',
+          stackTrace: runResult.stderr || '',
+          timestamp: new Date().toISOString(),
+        });
+        vscode.window.showWarningMessage('수정 후 실행에서 오류가 발생해 Agent에 기록했습니다.');
+      }
       return;
     }
 
@@ -133,6 +144,8 @@ async function handleDiagnosticApproval(document, diagnostic) {
 
 function activate(context) {
   console.log('Assistant Agent extension activated.');
+  const diagnosticTimers = new Map();
+  const handledDiagnostics = new Map();
 
   const sendSaveEvent = (document) => {
     const payload = {
@@ -155,18 +168,32 @@ function activate(context) {
 
   const saveDisposable = vscode.workspace.onDidSaveTextDocument(sendSaveEvent);
   const diagnosticDisposable = vscode.languages.onDidChangeDiagnostics((event) => {
+    const uriKey = event.uri.toString();
+    if (!event.diagnostics || event.diagnostics.length === 0) {
+      handledDiagnostics.delete(uriKey);
+      return;
+    }
     for (const diag of event.diagnostics || []) {
       if (diag.severity === vscode.DiagnosticSeverity.Error || diag.severity === vscode.DiagnosticSeverity.Warning) {
-        sendDiagnosticEvent(event.uri, diag);
-        const document = vscode.workspace.textDocuments.find((item) => item.uri.fsPath === event.uri.fsPath);
-        if (document) {
+        const diagnosticKey = `${uriKey}:${diag.range.start.line}:${diag.range.start.character}:${diag.message}`;
+        if (handledDiagnostics.get(uriKey) === diagnosticKey) continue;
+        handledDiagnostics.set(uriKey, diagnosticKey);
+        clearTimeout(diagnosticTimers.get(uriKey));
+        diagnosticTimers.set(uriKey, setTimeout(async () => {
+          sendDiagnosticEvent(event.uri, diag);
+          const document = await vscode.workspace.openTextDocument(event.uri);
           void handleDiagnosticApproval(document, diag);
-        }
+        }, 500));
       }
     }
   });
 
-  context.subscriptions.push(saveDisposable, diagnosticDisposable);
+  context.subscriptions.push(saveDisposable, diagnosticDisposable, {
+    dispose() {
+      for (const timer of diagnosticTimers.values()) clearTimeout(timer);
+      diagnosticTimers.clear();
+    },
+  });
 
   const disposable = {
     dispose() {
